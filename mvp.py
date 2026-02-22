@@ -1,169 +1,196 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+import requests
+import os
 
 # --- Page Configuration ---
-st.set_page_config(page_title="FridgeMate MVP", page_icon="🍳", layout="centered")
+# Set up the tab title, icon, and layout width
+st.set_page_config(page_title="FridgeMate Pro", page_icon="🍳", layout="centered")
 
-# --- Initialize Session Memory (The Learning Loop) ---
-# We use session_state to simulate a persistent user profile during the demo
-if "preference_memory" not in st.session_state:
-    st.session_state.preference_memory = [] 
-if "last_options" not in st.session_state:
-    st.session_state.last_options = None
+# --- 🧠 SMART MEMORY FUNCTIONS ---
+def save_feedback(text):
+    """Appends user feedback to a local text file to simulate long-term AI memory."""
+    with open("memory.txt", "a", encoding="utf-8") as f:
+        f.write(text + "\n")
 
-# --- Sidebar: System Settings & Memory Display ---
+def load_trimmed_memory(limit=5):
+    """
+    Reads the last few memories to stay within the AI's Token/Quota limits.
+    Focuses the AI on the most recent user preferences.
+    """
+    if os.path.exists("memory.txt"):
+        with open("memory.txt", "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f.readlines() if line.strip()]
+            return lines[-limit:] # Only return the last N entries
+    return []
+
+# --- Sidebar: The Learning Loop UI ---
 with st.sidebar:
     st.title("⚙️ System Settings")
+    # API Key input (Type set to password for security)
     gemini_api_key = st.text_input("Enter Gemini API Key", type="password")
     
     st.divider()
-    st.header("🧠 AI Learned Memory")
-    # Displaying what the AI has "learned" from user feedback
-    if st.session_state.preference_memory:
-        for i, pref in enumerate(st.session_state.preference_memory):
-            st.caption(f"{i+1}. {pref}")
+    st.header("🧠 Active Session Memory")
+    # Display the trimmed memory that the AI is currently "thinking" about
+    active_memories = load_trimmed_memory()
+    if active_memories:
+        st.write("Current AI Preferences:")
+        for i, pref in enumerate(active_memories):
+            st.caption(f"• {pref}")
+        
+        # Reset mechanism to clear the memory file
         if st.button("Reset AI Memory"):
-            st.session_state.preference_memory = []
+            if os.path.exists("memory.txt"): os.remove("memory.txt")
+            st.success("Memory cleared!")
             st.rerun()
     else:
-        st.write("AI is currently a blank slate. Provide feedback after cooking!")
+        st.write("AI is currently a blank slate.")
 
 # --- Main UI ---
 st.title("🍳 FridgeMate")
 st.markdown("*Supporting judgement, reducing decision fatigue.*")
 st.divider()
 
-# --- USER INPUT FLOW (Steps 1-4) ---
-# 1. Inventory Input (Natural Language)
-st.markdown("#### 1. Inventory Input")
-ingredients = st.text_area("What's in your fridge?", 
-                           placeholder="e.g., 2 eggs, 1 block of tofu, leftover kimchi, half a chicken breast", 
-                           height=100)
+# --- INPUT FLOW: Steps to gather user context ---
+st.markdown("#### 1. Inventory & Context")
+ingredients = st.text_area("What's in your fridge?", placeholder="e.g., 2 eggs, kimchi, tofu", height=100)
 
-# 2. Contextual Constraints (Time, Energy, Mood)
-st.markdown("#### 2. Contextual Constraints")
 c1, c2, c3 = st.columns(3)
 with c1:
-    time_avail = st.select_slider("Time Available", options=["15min", "30min", "1hr+"])
+    time_avail = st.select_slider("Time", options=["15min", "30min", "1hr+"])
 with c2:
-    energy_level = st.select_slider("Energy Level", options=["Low", "Medium", "High"])
+    energy_level = st.select_slider("Energy", options=["Low", "Medium", "High"])
 with c3:
-    vibe = st.text_input("Mood / Vibe", placeholder="e.g., Spicy comfort food")
+    vibe = st.text_input("Vibe", placeholder="e.g., Spicy comfort")
 
-# 3. Budget & 4. Grocery Access
-st.markdown("#### 3. Budget & 4. Grocery Access")
 col_a, col_b = st.columns(2)
 with col_a:
-    budget = st.text_input("Additional Budget", placeholder="e.g., £5 or less")
+    budget = st.text_input("Extra Budget", placeholder="e.g., £5")
 with col_b:
-    grocery_access = st.selectbox("Asian Grocery Access", ["Limited Access", "Occasional", "Frequent"])
+    grocery_access = st.selectbox("Asian Grocery Access", ["Limited", "Occasional", "Frequent"])
 
-# --- Action Button ---
+# --- Action Button: Triggers the AI Decision Process ---
 if st.button("Decide for Me", use_container_width=True, type="primary"):
     if not gemini_api_key:
         st.error("Please enter your Gemini API Key in the sidebar.")
-    elif not ingredients:
-        st.warning("Inventory cannot be empty.")
     else:
         try:
+            # Initialize the Gemini Client
             client = genai.Client(api_key=gemini_api_key)
             
-            # Combine past feedbacks to guide the AI
-            memory_str = ". ".join(st.session_state.preference_memory)
+            # Fetch the trimmed memory to personalize the prompt
+            recent_memory_str = ". ".join(load_trimmed_memory())
             
-            # System Instruction: Strictly defining the persona and output structure
+            # System Instruction: Strictly defining the output structure for parsing
             sys_instruct = f"""
-            You are FridgeMate, an expert culinary decision assistant for Asian diaspora in the UK.
-            User's Historical Preferences: {memory_str}
-
-            Task: Provide exactly 2-3 meal options based on input.
+            You are FridgeMate. Recent user preferences: {recent_memory_str}
+            Provide exactly 2 meal options. 
             
-            Recipe Requirements: 
-            - Be extremely specific with measurements (e.g., '1 tbsp soy sauce', '2 tsp sugar').
-            - Steps must be short, action-oriented, and concise.
-
-            Output Structure (MUST use '---' as delimiter):
+            Structure (MUST use '---' as delimiter):
             ---
-            NAME: [Dish Name] - [Short Plog-style Description]
-            META: [Prep Time] | [Difficulty Level]
-            COST: [Additional items to buy & estimated cost in GBP]
-            RECIPE: [3-5 concrete steps with exact seasoning amounts]
+            NAME: [Dish Name]
+            META: [Prep Time] | [Difficulty]
+            COST: [Extra items] | [Estimated Cost in GBP]
+            IMG_KEY: [Single food noun for image prompt]
+            ING_KEY: [Single raw ingredient noun for image prompt]
+            RECIPE: [Specific steps with measurements]
+            PLOG_CAPTION: [Emotional Instagram-style caption]
             ---
             """
             
-            user_msg = f"""
-            Ingredients: {ingredients}
-            Context: {time_avail} minutes, {energy_level} energy, {vibe} vibe.
-            Budget: {budget}.
-            Grocery Access: {grocery_access}.
-            """
-
-            # Calling Gemini 2.5 Flash for high-speed reasoning
+            # Call Gemini 2.0 Flash
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash", 
                 config=types.GenerateContentConfig(system_instruction=sys_instruct),
-                contents=user_msg
+                contents=f"Inventory: {ingredients}, Time: {time_avail}, Energy: {energy_level}, Vibe: {vibe}, Budget: {budget}"
             )
-            
+            # Store the raw text response in session state
             st.session_state.last_options = response.text
-            
         except Exception as e:
-            st.error(f"AI Connection Error: {e}")
+            st.error(f"Error: {e}")
+            st.info("Quota exceeded? Wait 60s or check your API usage in Google AI Studio.")
 
-# --- OUTPUT DELIVERY ---
-if st.session_state.last_options:
-    st.markdown("### ✨ Your Best Matches")
-    # Split the raw AI text into individual cards using the delimiter
+# --- OUTPUT DELIVERY: Parsing and displaying AI suggestions ---
+if "last_options" in st.session_state and st.session_state.last_options:
+    st.markdown("### ✨ Your Matches")
+    # Split the AI output into separate dishes using the delimiter
     raw_options = st.session_state.last_options.split("---")
     
-    # We use enumerate(i) to generate unique keys for buttons and avoid DuplicateElementKey errors
-    for i, opt in enumerate(raw_options):
+    idx = 0
+    for opt in raw_options:
         if "NAME:" in opt:
             with st.container(border=True):
                 lines = opt.strip().split('\n')
                 
-                # Extracting specific fields from AI response
-                dish_name = next((l for l in lines if "NAME:" in l), "NAME: Unknown").replace("NAME:", "").strip()
-                meta_info = next((l for l in lines if "META:" in l), "META: N/A").replace("META:", "").strip()
-                cost_info = next((l for l in lines if "COST:" in l), "COST: £0").replace("COST:", "").strip()
+                # Helper function to extract specific fields safely
+                def get_line(label, default="N/A"):
+                    for l in lines:
+                        if label in l:
+                            return l.replace(label, "").strip()
+                    return default
+
+                name = get_line("NAME:", "Dish Name")
+                meta = get_line("META:", "N/A")
+                cost = get_line("COST:", "No extra cost")
+                img_k = get_line("IMG_KEY:", "food")
+                ing_k = get_line("ING_KEY:", "ingredients")
                 
-                st.subheader(dish_name)
+                st.subheader(name)
                 
-                col_m, col_c = st.columns(2)
-                col_m.write(f"⏱️ **Info:** {meta_info}")
-                col_c.write(f"💰 **Extra:** {cost_info}")
+                # Display Time and Cost metadata
+                c_meta, c_cost = st.columns(2)
+                c_meta.write(f"⏱️ **Info:** {meta}")
+                c_cost.write(f"💰 **Extras:** {cost}")
                 
-                # Expandable Recipe Section
-                with st.expander("📖 View Step-by-Step Recipe"):
+                # Recipe expander
+                with st.expander("📖 View Recipe Instructions"):
                     if "RECIPE:" in opt:
-                        # Extract everything after the RECIPE: label
-                        recipe_content = opt.split("RECIPE:")[1].strip()
-                        st.markdown(recipe_content)
-                    else:
-                        st.write("Recipe details unavailable.")
+                        recipe = opt.split("RECIPE:")[1].split("PLOG_CAPTION:")[0].strip()
+                        st.markdown(recipe)
+
+                # --- 🎨 AI IMAGE GENERATION (Via Pollinations.ai) ---
+                if st.button(f"✨ Generate Real-Time AI Plog for {name}", key=f"btn_{idx}"):
+                    with st.spinner("AI is painting your Plog..."):
+                        # Prepare URL-safe prompts for the image generator
+                        prompt_done = f"plated {name}, {img_k}, professional food photography, cinematic lighting, 4k".replace(" ", "%20")
+                        prompt_raw = f"raw ingredients for {name}, {ing_k}, kitchen counter, aesthetic flatlay, 4k".replace(" ", "%20")
+
+                        # External image generation API URLs
+                        url_done = f"https://image.pollinations.ai/prompt/{prompt_done}?nologo=true"
+                        url_raw = f"https://image.pollinations.ai/prompt/{prompt_raw}?nologo=true"
+        
+                        # Display Images side-by-side (Dual-Image Plog)
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.image(url_raw, caption="📸 The Prep")
+                        with col2:
+                            st.image(url_done, caption="📸 The Result")
+                    
+                    if "PLOG_CAPTION:" in opt:
+                        caption = opt.split("PLOG_CAPTION:")[1].strip()
+                        st.info(caption)
+
+                    # Real image download button
+                    try:
+                        img_data = requests.get(url_done).content
+                        st.download_button("📸 Download Plog", data=img_data, file_name=f"{name}.jpg", mime="image/jpeg", key=f"dl_{idx}")
+                    except:
+                        pass
                 
-                # Output Delivery Points 4 & 5 (Interactive Buttons)
-                b1, b2 = st.columns(2)
-                # Using unique keys f"img_{i}" to prevent Streamlit Errors
-                b1.button("🖼️ Preview Image/Video", key=f"img_{i}", use_container_width=True)
-                b2.button("🔗 Full Plog Content", key=f"plog_{i}", use_container_width=True)
+                idx += 1
 
-    # --- FEEDBACK LOOP (Memory Mechanism) ---
-    st.divider()
-    st.subheader("📝 Feedback for Personalization")
-    feedback = st.text_input("How was this suggestion? (AI will learn from this)", 
-                             placeholder="e.g., 'A bit too salty', 'I prefer more garlic', 'No more tofu please'")
-    
-    if st.button("Submit Feedback & Teach AI"):
-        if feedback:
-            # Store feedback in session memory
-            st.session_state.preference_memory.append(feedback)
-            st.success("Preference saved! Next time, I'll adjust the seasonings and choices for you.")
-            # Reset view to show updated memory on next run
-            st.session_state.last_options = None
-            st.rerun()
-
-# --- Footer ---
+# --- FEEDBACK LOOP: The Teaching mechanism ---
 st.divider()
-st.caption("UCL MSIN0231 | FridgeMate MVP Framework | Powered by Gemini 2.5 Flash")
+st.subheader("📝 Feedback & Learning")
+st.write("Help FridgeMate adapt to your tastes.")
+feedback = st.text_input("Any preferences? (e.g., 'Less salt', 'No onions')")
+if st.button("Submit & Teach AI"):
+    if feedback:
+        save_feedback(feedback)
+        st.success("Preference saved! AI memory has been updated.")
+        st.rerun()
+
+st.divider()
+st.caption("FridgeMate MVP | UCL MSIN0231 | Powered by Gemini 2.0 Flash & Pollinations AI")
