@@ -1,6 +1,4 @@
 import streamlit as st
-from google import genai
-from google.genai import types
 from groq import Groq
 import requests
 import os
@@ -11,12 +9,12 @@ st.set_page_config(page_title="FridgeMate Pro", page_icon="🍳", layout="center
 
 # --- 🧠 SMART MEMORY FUNCTIONS ---
 def save_feedback(text):
-    """Appends user preferences to a local file to simulate persistent AI learning."""
+    """將使用者偏好附加到本地檔案，模擬 AI 的持續學習。"""
     with open("memory.txt", "a", encoding="utf-8") as f:
         f.write(text + "\n")
 
 def load_trimmed_memory(limit=5):
-    """Loads the most recent interactions to keep the AI's context window relevant."""
+    """載入最近的互動記錄，保持 AI 上下文的相關性。"""
     if os.path.exists("memory.txt"):
         with open("memory.txt", "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
@@ -26,18 +24,14 @@ def load_trimmed_memory(limit=5):
 # --- Sidebar: System Configuration & Memory Display ---
 with st.sidebar:
     st.title("⚙️ System Settings")
-    provider = st.radio("Select AI Provider", ["Gemini (Google)", "Groq (Llama)"])
+    st.info("Provider: Groq (Llama 3.3)")
     
-    if provider == "Gemini (Google)":
-        api_key = st.text_input("Gemini API Key", type="password")
-        model_id = "gemini-2.0-flash"
-    else:
-        api_key = st.text_input("Groq API Key", type="password")
-        model_id = "llama-3.3-70b-versatile"
+    api_key = st.text_input("Groq API Key", type="password")
+    model_id = "llama-3.3-70b-versatile"
     
     st.divider()
-    # Required for the 2026 Router Image Generation API
-    hf_token = st.text_input("Hugging Face Token", type="password", help="Get your free token at hf.co/settings/tokens")
+    # 2026 Router 圖像生成 API 所需
+    hf_token = st.text_input("Hugging Face Token", type="password", help="在 hf.co/settings/tokens 獲取免費 Token")
     
     st.divider()
     st.header("🧠 Active Session Memory")
@@ -54,12 +48,9 @@ with st.sidebar:
     else:
         st.write("AI is currently a blank slate.")
 
-# --- 🎨 AI Image Generation Logic (Multi-Modal Layer) ---
+# --- 🎨 AI Image Generation Logic ---
 def generate_hf_image(prompt, token):
-    """
-    Connects to the 2026 Hugging Face Router API.
-    Handles 503 Service Unavailable errors by waiting for the model to load.
-    """
+    """連接到 Hugging Face Router API 生成圖像。"""
     API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -69,7 +60,6 @@ def generate_hf_image(prompt, token):
             if response.status_code == 200:
                 return response.content
             elif response.status_code == 503:
-                # Model is still waking up from sleep mode
                 wait_time = response.json().get("estimated_time", 20)
                 st.info(f"⏳ AI Artist is waking up... Waiting {int(wait_time)}s.")
                 time.sleep(wait_time)
@@ -84,7 +74,7 @@ st.title("🍳 FridgeMate")
 st.markdown("*Reducing decision fatigue with professional culinary AI.*")
 st.divider()
 
-# --- INPUT FLOW: Gather Context ---
+# --- INPUT FLOW ---
 st.markdown("#### 1. Inventory & Context")
 ingredients = st.text_area("What's in your fridge?", placeholder="e.g., 2 eggs, kimchi, chicken breast", height=100)
 
@@ -102,28 +92,20 @@ with col_a:
 with col_b:
     grocery_access = st.selectbox("Asian Grocery Access", ["Limited", "Occasional", "Frequent"])
 
-# --- Action Button: Triggers Decision Engine ---
+# --- Action Button ---
 if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, type="primary"):
     if not api_key:
-        st.error("Please enter your API Key in the sidebar!")
+        st.error("Please enter your Groq API Key in the sidebar!")
     else:
         with st.spinner("AI is calculating portions and creative recipes..."):
             try:
-                # Inject persistent memory into the system prompt
                 recent_mem = ". ".join(load_trimmed_memory())
                 
-                # Instruction to the LLM to maintain a strict parsable structure
                 sys_instruct = f"""
                 You are FridgeMate, a precise professional chef AI. History: {recent_mem}. 
                 Provide exactly 3 distinct meal options based on user inventory.
                 
-                For each option:
-                - RECIPE: Include EXACT measurements (e.g., 200ml water, 1 tbsp salt) and numbered steps.
-                - LEVEL: Specify difficulty (Easy/Medium/Hard) and a brief technical reason.
-                - COST: Provide estimated extra cost in GBP £.
-                - CAPTION: An engaging social media post with emojis and hashtags.
-                
-                Structure (MUST use '---' as delimiter):
+                For each option, use this structure (MUST use '---' as delimiter):
                 ---
                 NAME: [Dish Name]
                 TIME: [Prep Time]
@@ -138,22 +120,20 @@ if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, typ
                 """
                 prompt_text = f"Inventory: {ingredients}, Time: {time_avail}, Vibe: {vibe}, Budget: {budget}"
 
-                if provider == "Gemini (Google)":
-                    client = genai.Client(api_key=api_key)
-                    res = client.models.generate_content(model=model_id, 
-                        config=types.GenerateContentConfig(system_instruction=sys_instruct),
-                        contents=prompt_text)
-                    st.session_state.last_options = res.text
-                else:
-                    client = Groq(api_key=api_key)
-                    res = client.chat.completions.create(model=model_id,
-                        messages=[{"role": "system", "content": sys_instruct}, {"role": "user", "content": prompt_text}])
-                    st.session_state.last_options = res.choices[0].message.content
+                client = Groq(api_key=api_key)
+                res = client.chat.completions.create(
+                    model=model_id,
+                    messages=[
+                        {"role": "system", "content": sys_instruct}, 
+                        {"role": "user", "content": prompt_text}
+                    ]
+                )
+                st.session_state.last_options = res.choices[0].message.content
                 st.rerun()
             except Exception as e:
                 st.error(f"Logic Error: {e}")
 
-# --- OUTPUT DELIVERY: Parsing & Multi-Modal Display ---
+# --- OUTPUT DELIVERY ---
 if "last_options" in st.session_state:
     st.markdown("### ✨ Your 3 Matches")
     raw_options = st.session_state.last_options.split("---")
@@ -170,33 +150,27 @@ if "last_options" in st.session_state:
 
                 st.subheader(f"Option {idx+1}: {get_val('NAME:')}")
                 
-                # Grid for Metadata
                 m1, m2 = st.columns(2)
                 m1.write(f"⏱️ **Prep Time:** {get_val('TIME:')}")
-                m2.write(f"🔥 **Difficulty:** {get_l('LEVEL:') if 'get_l' in locals() else get_val('LEVEL:')}")
+                m2.write(f"🔥 **Difficulty:** {get_val('LEVEL:')}")
                 
                 m3, m4 = st.columns(2)
                 m3.write(f"🛒 **To Buy:** {get_val('SHOPPING:')}")
                 m4.write(f"💰 **Estimated Cost:** {get_val('COST:')}")
 
-                # Detailed Recipe (Measurements + Steps)
                 with st.expander("📖 View Precise Recipe & Instructions"):
                     if "RECIPE:" in opt:
-                        # Extract recipe block between tags
                         recipe_content = opt.split("RECIPE:")[1].split("CAPTION:")[0].strip()
                         st.markdown(recipe_content)
 
-                # --- 🎨 Generate Dual-Image Visual Plog ---
                 if st.button(f"🎨 Generate Plog & Caption ({get_val('NAME:')})", key=f"btn_{idx}"):
                     if not hf_token:
                         st.warning("Please provide a Hugging Face Token in the sidebar.")
                     else:
-                        with st.spinner("Visualizing your meal via Stable Diffusion XL..."):
-                            # Image 1: Finished Dish
+                        with st.spinner("Visualizing your meal..."):
                             p_done = f"Professional food photography, plated {get_val('NAME:')}, {get_val('IMG_KEY:')}, cinematic lighting, 8k"
                             img_done = generate_hf_image(p_done, hf_token)
                             
-                            # Image 2: Raw Ingredients
                             p_raw = f"Aesthetic kitchen flatlay, {get_val('ING_KEY:')}, raw ingredients on rustic wood, 8k"
                             img_raw = generate_hf_image(p_raw, hf_token)
 
@@ -204,21 +178,15 @@ if "last_options" in st.session_state:
                                 col_a, col_b = st.columns(2)
                                 with col_a: st.image(img_raw, caption="📸 The Prep")
                                 with col_b: st.image(img_done, caption="📸 The Result")
-                                
-                                # Display AI Generated Social Caption
                                 st.success("📝 **Recommended Social Media Caption:**")
                                 st.write(get_val("CAPTION:"))
-                                
-                                # Enable download of the result image
-                                st.download_button("💾 Download Dish Image", data=img_done, file_name=f"{get_val('NAME:')}.jpg", key=f"dl_{idx}")
                             else:
                                 st.error("Image API is currently busy. Please try again.")
                 idx += 1
 
-# --- FEEDBACK LOOP: The Teaching Mechanism ---
+# --- FEEDBACK LOOP ---
 st.divider()
 st.subheader("📝 Feedback & Learning")
-st.write("Help FridgeMate adapt to your taste (e.g., 'I dislike cilantro', 'Make it spicier').")
 user_pref = st.text_input("Enter a new preference:", placeholder="e.g., I have a nut allergy...")
 
 if st.button("Submit & Teach AI"):
@@ -228,4 +196,4 @@ if st.button("Submit & Teach AI"):
         st.rerun()
 
 st.divider()
-st.caption("FridgeMate Precise v2.0 | Optimized for UCL MSIN0231 Showcase | 2026 API Compliant")
+st.caption("FridgeMate | 2026 API Compliant")
