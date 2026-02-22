@@ -9,12 +9,12 @@ st.set_page_config(page_title="FridgeMate Pro", page_icon="🍳", layout="center
 
 # --- 🧠 SMART MEMORY FUNCTIONS ---
 def save_feedback(text):
-    """將使用者偏好附加到本地檔案，模擬 AI 的持續學習。"""
+    """Appends user preferences to a local file to simulate persistent AI learning."""
     with open("memory.txt", "a", encoding="utf-8") as f:
         f.write(text + "\n")
 
 def load_trimmed_memory(limit=5):
-    """載入最近的互動記錄，保持 AI 上下文的相關性。"""
+    """Loads the most recent interactions to keep the AI's context window relevant."""
     if os.path.exists("memory.txt"):
         with open("memory.txt", "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
@@ -26,12 +26,13 @@ with st.sidebar:
     st.title("⚙️ System Settings")
     st.info("Provider: Groq (Llama 3.3)")
     
+    # Input for Groq API Key
     api_key = st.text_input("Groq API Key", type="password")
     model_id = "llama-3.3-70b-versatile"
     
     st.divider()
-    # 2026 Router 圖像生成 API 所需
-    hf_token = st.text_input("Hugging Face Token", type="password", help="在 hf.co/settings/tokens 獲取免費 Token")
+    # Required for the 2026 Router Image Generation API
+    hf_token = st.text_input("Hugging Face Token", type="password", help="Get your free token at hf.co/settings/tokens")
     
     st.divider()
     st.header("🧠 Active Session Memory")
@@ -50,7 +51,10 @@ with st.sidebar:
 
 # --- 🎨 AI Image Generation Logic ---
 def generate_hf_image(prompt, token):
-    """連接到 Hugging Face Router API 生成圖像。"""
+    """
+    Connects to the 2026 Hugging Face Router API.
+    Handles 503 Service Unavailable by waiting for model to load.
+    """
     API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -60,6 +64,7 @@ def generate_hf_image(prompt, token):
             if response.status_code == 200:
                 return response.content
             elif response.status_code == 503:
+                # Model is warming up; wait based on API suggestion
                 wait_time = response.json().get("estimated_time", 20)
                 st.info(f"⏳ AI Artist is waking up... Waiting {int(wait_time)}s.")
                 time.sleep(wait_time)
@@ -74,7 +79,7 @@ st.title("🍳 FridgeMate")
 st.markdown("*Reducing decision fatigue with professional culinary AI.*")
 st.divider()
 
-# --- INPUT FLOW ---
+# --- INPUT FLOW: Gather Context ---
 st.markdown("#### 1. Inventory & Context")
 ingredients = st.text_area("What's in your fridge?", placeholder="e.g., 2 eggs, kimchi, chicken breast", height=100)
 
@@ -92,20 +97,22 @@ with col_a:
 with col_b:
     grocery_access = st.selectbox("Asian Grocery Access", ["Limited", "Occasional", "Frequent"])
 
-# --- Action Button ---
+# --- Action Button: Triggers Decision Engine ---
 if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, type="primary"):
     if not api_key:
         st.error("Please enter your Groq API Key in the sidebar!")
     else:
         with st.spinner("AI is calculating portions and creative recipes..."):
             try:
+                # Inject persistent memory into the system prompt
                 recent_mem = ". ".join(load_trimmed_memory())
                 
+                # Instruction to the LLM to maintain a strict parsable structure
                 sys_instruct = f"""
                 You are FridgeMate, a precise professional chef AI. History: {recent_mem}. 
                 Provide exactly 3 distinct meal options based on user inventory.
                 
-                For each option, use this structure (MUST use '---' as delimiter):
+                Structure (MUST use '---' as delimiter):
                 ---
                 NAME: [Dish Name]
                 TIME: [Prep Time]
@@ -120,6 +127,7 @@ if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, typ
                 """
                 prompt_text = f"Inventory: {ingredients}, Time: {time_avail}, Vibe: {vibe}, Budget: {budget}"
 
+                # Initialize Groq client
                 client = Groq(api_key=api_key)
                 res = client.chat.completions.create(
                     model=model_id,
@@ -133,7 +141,7 @@ if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, typ
             except Exception as e:
                 st.error(f"Logic Error: {e}")
 
-# --- OUTPUT DELIVERY ---
+# --- OUTPUT DELIVERY: Parsing & Display ---
 if "last_options" in st.session_state:
     st.markdown("### ✨ Your 3 Matches")
     raw_options = st.session_state.last_options.split("---")
@@ -150,6 +158,7 @@ if "last_options" in st.session_state:
 
                 st.subheader(f"Option {idx+1}: {get_val('NAME:')}")
                 
+                # Grid for Metadata
                 m1, m2 = st.columns(2)
                 m1.write(f"⏱️ **Prep Time:** {get_val('TIME:')}")
                 m2.write(f"🔥 **Difficulty:** {get_val('LEVEL:')}")
@@ -158,19 +167,23 @@ if "last_options" in st.session_state:
                 m3.write(f"🛒 **To Buy:** {get_val('SHOPPING:')}")
                 m4.write(f"💰 **Estimated Cost:** {get_val('COST:')}")
 
+                # Detailed Recipe Display
                 with st.expander("📖 View Precise Recipe & Instructions"):
                     if "RECIPE:" in opt:
                         recipe_content = opt.split("RECIPE:")[1].split("CAPTION:")[0].strip()
                         st.markdown(recipe_content)
 
+                # --- 🎨 Generate Dual-Image Visuals ---
                 if st.button(f"🎨 Generate Plog & Caption ({get_val('NAME:')})", key=f"btn_{idx}"):
                     if not hf_token:
                         st.warning("Please provide a Hugging Face Token in the sidebar.")
                     else:
-                        with st.spinner("Visualizing your meal..."):
+                        with st.spinner("Visualizing your meal via Stable Diffusion XL..."):
+                            # Image 1: Finished Dish
                             p_done = f"Professional food photography, plated {get_val('NAME:')}, {get_val('IMG_KEY:')}, cinematic lighting, 8k"
                             img_done = generate_hf_image(p_done, hf_token)
                             
+                            # Image 2: Raw Ingredients
                             p_raw = f"Aesthetic kitchen flatlay, {get_val('ING_KEY:')}, raw ingredients on rustic wood, 8k"
                             img_raw = generate_hf_image(p_raw, hf_token)
 
@@ -178,15 +191,17 @@ if "last_options" in st.session_state:
                                 col_a, col_b = st.columns(2)
                                 with col_a: st.image(img_raw, caption="📸 The Prep")
                                 with col_b: st.image(img_done, caption="📸 The Result")
+                                
                                 st.success("📝 **Recommended Social Media Caption:**")
                                 st.write(get_val("CAPTION:"))
                             else:
                                 st.error("Image API is currently busy. Please try again.")
                 idx += 1
 
-# --- FEEDBACK LOOP ---
+# --- FEEDBACK LOOP: Learning Mechanism ---
 st.divider()
 st.subheader("📝 Feedback & Learning")
+st.write("Help FridgeMate adapt to your taste.")
 user_pref = st.text_input("Enter a new preference:", placeholder="e.g., I have a nut allergy...")
 
 if st.button("Submit & Teach AI"):
@@ -196,4 +211,4 @@ if st.button("Submit & Teach AI"):
         st.rerun()
 
 st.divider()
-st.caption("FridgeMate | 2026 API Compliant")
+st.caption("FridgeMate| 2026 API Compliant")
