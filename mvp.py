@@ -139,7 +139,7 @@ def generate_hf_image(prompt, token):
     return None
 
 # --- Main UI ---
-st.title("🍳 FridgeMate")
+st.title("🍳 FridgeMate: Your AI Cooking Assistant")
 st.markdown("*Reducing decision fatigue with professional culinary AI.*")
 st.divider()
 

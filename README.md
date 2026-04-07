@@ -1,4 +1,4 @@
-# FridgeMate Pro
+# FridgeMate: Your AI Cooking Assistant
 
 A Streamlit-based AI kitchen assistant that helps users turn refrigerator ingredients into recipe suggestions, with optional photo-based ingredient recognition and cuisine filtering for Asian dishes.
 
