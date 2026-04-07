@@ -3,6 +3,8 @@ from groq import Groq
 import requests
 import os
 import time
+import base64
+from openai import OpenAI
 
 # --- Page Configuration ---
 st.set_page_config(page_title="FridgeMate Pro", page_icon="🍳", layout="centered")
@@ -24,11 +26,15 @@ def load_trimmed_memory(limit=5):
 # --- Sidebar: System Configuration & Memory Display ---
 with st.sidebar:
     st.title("⚙️ System Settings")
-    st.info("Provider: Groq (Llama 3.3)")
+    st.info("Providers: Groq (Llama 3.3) + OpenAI (GPT-4o Vision)")
     
     # Input for Groq API Key
     api_key = st.text_input("Groq API Key", type="password")
     model_id = "llama-3.3-70b-versatile"
+    
+    st.divider()
+    # OpenAI API Key for Image Recognition
+    openai_api_key = st.text_input("OpenAI API Key", type="password", help="Get your key at platform.openai.com/api-keys")
     
     st.divider()
     # Required for the 2026 Router Image Generation API
@@ -48,6 +54,64 @@ with st.sidebar:
             st.rerun()
     else:
         st.write("AI is currently a blank slate.")
+
+# --- 🎨 AI Image Generation Logic ---
+# --- 🖼️ AI Image Recognition Logic (OpenAI GPT-4o) ---
+def recognize_fridge_ingredients(image_data, api_key):
+    """
+    Uses OpenAI GPT-4o Vision to identify ingredients in a fridge image.
+    Returns a comma-separated list of detected ingredients.
+    """
+    try:
+        # Encode image to base64
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        client = OpenAI(api_key=api_key)
+        
+        # Check image size
+        image_size_mb = len(image_data) / (1024 * 1024)
+        if image_size_mb > 20:
+            st.warning(f"⚠️ Image is large ({image_size_mb:.1f}MB). Consider using a smaller file.")
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # gpt-4o-mini supports vision and is more affordable
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "You are a professional chef analyzing a refrigerator photo. Please identify ALL food items and ingredients visible. List them as a comma-separated list with quantities if visible. Format: 'item1 (quantity), item2 (quantity), ...'. Be specific and include: vegetables, proteins, dairy, condiments, frozen items, etc."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=500,
+            temperature=0.3  # Lower temperature for consistent results
+        )
+        
+        result = response.choices[0].message.content
+        return result
+        
+    except Exception as e:
+        error_msg = str(e)
+        st.error(f"❌ API Error: {error_msg}")
+        
+        # Provide helpful troubleshooting
+        if "401" in error_msg or "unauthorized" in error_msg.lower():
+            st.warning("🔑 Your OpenAI API Key may be invalid. Please check it in the sidebar.")
+        elif "rate_limit" in error_msg.lower():
+            st.warning("⏱️ Rate limit exceeded. Please wait a moment and try again.")
+        elif "model" in error_msg.lower():
+            st.info("ℹ️ Your account may not have access to this model. Try using GPT-4 Vision instead.")
+        
+        return None
 
 # --- 🎨 AI Image Generation Logic ---
 def generate_hf_image(prompt, token):
@@ -81,7 +145,65 @@ st.divider()
 
 # --- INPUT FLOW: Gather Context ---
 st.markdown("#### 1. Inventory & Context")
-ingredients = st.text_area("What's in your fridge?", placeholder="e.g., 2 eggs, kimchi, chicken breast", height=100)
+
+# --- 📸 Image Recognition Section ---
+st.markdown("**Option A: Upload Fridge Photo** (Auto-detect ingredients)")
+uploaded_image = st.file_uploader("Choose a fridge photo", type=["jpg", "jpeg", "png"], key="fridge_photo")
+
+if uploaded_image is not None:
+    if st.button("🔍 Scan Ingredients with AI", use_container_width=True):
+        if not openai_api_key:
+            st.error("Please enter your OpenAI API Key in the sidebar!")
+        else:
+            with st.spinner("GPT-4o is analyzing your fridge..."):
+                image_bytes = uploaded_image.read()
+                detected_ingredients = recognize_fridge_ingredients(image_bytes, openai_api_key)
+                
+                if detected_ingredients:
+                    st.success("✅ Ingredients detected!")
+                    st.session_state.detected_ingredients = detected_ingredients
+                    st.info(f"**Found:** {detected_ingredients}")
+
+st.markdown("**Option B: Manual Input** (Or combine with detected ingredients)")
+if "detected_ingredients" in st.session_state:
+    default_ingredients = st.session_state.detected_ingredients
+    st.info(f"📋 Pre-filled with detected items. Feel free to edit!")
+else:
+    default_ingredients = ""
+
+ingredients = st.text_area("What's in your fridge?", placeholder="e.g., 2 eggs, kimchi, chicken breast", height=100, value=default_ingredients)
+
+# --- 🌏 Asian Cuisine Selection (Multi-select) ---
+st.markdown("**Cuisine Preference**")
+asian_cuisines = {
+    "🇨🇳 Chinese": "Chinese",
+    "🇯🇵 Japanese": "Japanese", 
+    "🇰🇷 Korean": "Korean",
+    "🇹🇭 Thai": "Thai",
+    "🇮🇳 Indian": "Indian",
+    "🇻🇳 Vietnamese": "Vietnamese",
+    "🇵🇭 Filipino": "Filipino",
+    "🇲🇾 Malaysian": "Malaysian",
+    "🇸🇬 Singaporean": "Singaporean",
+    "🇮🇩 Indonesian": "Indonesian",
+    "🇱🇦 Laotian": "Laotian",
+    "🇰🇭 Cambodian": "Cambodian"
+}
+
+# Create columns for checkbox layout
+cols = st.columns(4)
+selected_cuisines = []
+for idx, (label, cuisine) in enumerate(asian_cuisines.items()):
+    with cols[idx % 4]:
+        if st.checkbox(label, value=False, key=f"cuisine_{cuisine}"):
+            selected_cuisines.append(cuisine)
+
+if not selected_cuisines:
+    st.warning("⚠️ Please select at least one cuisine type!")
+    selected_cuisines_text = "any Asian"
+else:
+    selected_cuisines_text = ", ".join(selected_cuisines)
+    st.success(f"✅ Selected: {selected_cuisines_text}")
 
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -107,9 +229,13 @@ if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, typ
                 # Inject persistent memory into the system prompt
                 recent_mem = ". ".join(load_trimmed_memory())
                 
+                # Build cuisine constraint
+                cuisine_constraint = f"ONLY suggest dishes from these cuisines: {selected_cuisines_text}. Strictly adhere to this cuisine preference." if selected_cuisines else ""
+                
                 # Instruction to the LLM to maintain a strict parsable structure
                 sys_instruct = f"""
                 You are FridgeMate, a precise professional chef AI. History: {recent_mem}. 
+                {cuisine_constraint}
                 Provide exactly 3 distinct meal options based on user inventory.
                 
                 Structure (MUST use '---' as delimiter):
@@ -125,7 +251,7 @@ if st.button("Decide for Me (Generate 3 Options)", use_container_width=True, typ
                 CAPTION: [Instagram style text]
                 ---
                 """
-                prompt_text = f"Inventory: {ingredients}, Time: {time_avail}, Vibe: {vibe}, Budget: {budget}"
+                prompt_text = f"Inventory: {ingredients}, Time: {time_avail}, Vibe: {vibe}, Budget: {budget}, Cuisines: {selected_cuisines_text}"
 
                 # Initialize Groq client
                 client = Groq(api_key=api_key)
